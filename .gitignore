@@ -7,6 +7,9 @@ node_modules/
 #CSS
 style.css
 
+#dist
+/dist
+
 #Bower modules
 bower_components/
 

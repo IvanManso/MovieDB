@@ -31615,7 +31615,14 @@ angular.module("moviedb", ['ngRoute']).config(
 
 );
 ;angular.module("moviedb").controller("AppController",
-	["$scope", function($scope){
+	["$scope", "$location", function($scope, $location){
+		var controller = this;
+		//Controller properties
+		controller.titles = {
+			"/movies" : "Movies List",
+			"/series" : "Series List",
+			"/people" : "People List"
+		}
 
 		//Model init
 		$scope.model ={
@@ -31624,23 +31631,21 @@ angular.module("moviedb", ['ngRoute']).config(
 
 		//Scope event listener
 		//capturar evento con $on
-		$scope.$on("OnMenuChange", function(evt, data){
-			$scope.model.title = data;
-		});
+		$scope.$on("$locationChangeSuccess", function(evt, currentRoute){
+			$scope.model.title = controller.titles[$location.path()] || "404 Not found";
+			});
 
 	}]
 	);
 ;//En el  módulo moviedb, defino el controlador
-angular.module("moviedb").controller("MenuController", ["$scope", function($scope) {
+angular.module("moviedb").controller("MenuController", ["$scope", "$location", function($scope, $location) {
     //Scope init
     $scope.model = {
         selectedItem: "movies"
     };
 
     //Scope methods
-    $scope.setSelectedItem = function(item) {
-        $scope.model.selectedItem = item;
-    };
+
 
     $scope.getClassForItem = function(item) {
         if ($scope.model.selectedItem == item) {
@@ -31650,13 +31655,64 @@ angular.module("moviedb").controller("MenuController", ["$scope", function($scop
         }
     };
 
-    //Scope Watchers
-    $scope.$watch("model.selectedItem", function(newValue, oldValue) {
-    	//emitimos un evento para que se entere AppControllers del cambios de opción del menú
-    	$scope.$emit("OnMenuChange", newValue);
+    //Scope Event Listeners
+    $scope.$on("$locationChangeSuccess", function(evt, currentRoute) {
+        $scope.model.selectedItem = $location.path();
     });
 
+
+
 }]);
-;angular.module("moviedb").controller("MoviesListController", ["$scope", function($scope){
-	$scope.name= "Joseba";
+;angular.module("moviedb").controller("MoviesListController", ["$scope", "$log", "MovieService", function($scope, $log, MovieService) {
+
+    //Scope init
+    $scope.model = [];
+    $scope.uiState = "loading";
+
+
+    //Controller start
+    MovieService.getMovies()
+        .then(
+            //promesa resuelta
+            function(data) {
+                $log.log("SUCCESS", data);
+                $scope.model = data;
+                if ($scope.model.length == 0) {
+                    $scope.uiState = "blank";
+                } else {
+                    $scope.uiState = "ideal";
+                }
+            },
+            //promesa rechazada
+            function(data) {
+                $log.error("Error", data);
+                $scope.uiState = "error";
+            }
+        );
+
+}]);
+;angular.module("moviedb").service("MovieService",
+		 ["$q", "$timeout", function($q, $timeout){
+
+        var movies = [];
+
+        this.getMovies = function(){
+        //creamos el objeto diferido
+        var deferred = $q.defer();
+        //asincronía
+        $timeout(function() {
+            if (Math.round(Math.random() * 10) % 2 == 0) {
+                //resolvermos la promesa
+                deferred.resolve(movies);
+            } else {
+                //rechazamos la promesa
+                deferred.reject({error: "Forbidden"});
+
+            }
+        }, 500);
+
+        //devolvemos la promesa del objeto diferido
+        return deferred.promise;
+
+    };
 }]);
