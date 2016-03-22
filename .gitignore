@@ -8,10 +8,13 @@ node_modules/
 style.css
 
 #dist
-/dist
+dist/
 
 #Bower modules
 bower_components/
 
 #Python
 *.py*
+
+#BD
+db/
