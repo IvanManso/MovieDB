@@ -1,18 +1,21 @@
 //Defino el módulo de "moviedb"
-angular.module("moviedb", ['ngRoute']).config(
-    ["$routeProvider", function($routeProvider) {
+angular.module("moviedb", ['ngRoute', "URL"]).config(
+    ["$routeProvider", "paths", function($routeProvider, paths) {
         //Configuro las URLs de la app
         $routeProvider
-            .when("/movies", {
+            .when(paths.movies, {
                 templateUrl: "views/MoviesList.html"
             })
-            .when("/series", {
+            .when(paths.movieDetail, {
+                templateUrl: "views/MovieDetail.html"
+            })
+            .when(paths.series, {
                 templateUrl: "views/SeriesList.html"
             })
-            .when("/people", {
+            .when(paths.people, {
                 templateUrl: "views/PeopleList.html"
             })
-            .when("/", {
+            .when(paths.home, {
                 redirectTo: "/movies"
             })
             .otherwise({

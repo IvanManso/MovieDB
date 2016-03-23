@@ -1,9 +1,11 @@
 //En el  módulo moviedb, defino el controlador
-angular.module("moviedb").controller("MenuController", ["$scope", "$location", function($scope, $location) {
+angular.module("moviedb").controller("MenuController", ["$scope", "$location", "paths", function($scope, $location, paths) {
     //Scope init
     $scope.model = {
-        selectedItem: "movies"
+        selectedItem: paths.movies
     };
+
+    $scope.paths = paths;
 
     //Scope methods
 
