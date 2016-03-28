@@ -36135,10 +36135,15 @@ angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
                 templateUrl: "views/MoviesList.html"
             })
             .when(paths.movieDetail, {
-                templateUrl: "views/MovieDetail.html"
+                controller: "MovieDetailController",
+                templateUrl: "views/MediaItemDetail.html"
             })
             .when(paths.series, {
                 templateUrl: "views/SeriesList.html"
+            })
+            .when(paths.serieDetail, {
+                controller: "SerieDetailController",
+                templateUrl: "views/MediaItemDetail.html"
             })
             .when(paths.people, {
                 templateUrl: "views/PeopleList.html"
@@ -36147,11 +36152,12 @@ angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
                 redirectTo: "/movies"
             })
             .otherwise({
-            	templateUrl: "views/404.html"
+                templateUrl: "views/404.html"
             })
     }]
 
 );
+
 ;angular.module("moviedb").controller("AppController", ["$scope", "$location", "paths", function($scope, $location, paths) {
     var controller = this;
     //Controller properties
@@ -36261,6 +36267,30 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         );
 
 }]);
+;angular.module("moviedb").controller("SerieDetailController", ["$scope", "$routeParams", "$location", "APIClient", "paths", function($scope, $routeParams, $location, APIClient, paths) {
+    //Scope init
+    $scope.model = {};
+    $scope.uiState = "loading";
+
+    //Controller init
+    $scope.$emit("ChangeTitle", "Loading...");
+    APIClient.getSerie($routeParams.id)
+        .then(function(serie) {
+                //película encontrada
+                $scope.model = serie;
+                $scope.uiState = 'ideal';
+                //Desde un hijo al padre
+                $scope.$emit("ChangeTitle", $scope.model.title);
+            },
+            function(error) {
+                //película no encontrada
+                $location.url(paths.notFound);
+            }
+
+        );
+
+}]);
+
 ;angular.module("moviedb").controller("SeriesListController", ["$scope", "$log", "APIClient", "URL", "paths", function($scope, $log, APIClient, URL, paths) {
 
     //Scope init

@@ -7,10 +7,15 @@ angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
                 templateUrl: "views/MoviesList.html"
             })
             .when(paths.movieDetail, {
-                templateUrl: "views/MovieDetail.html"
+                controller: "MovieDetailController",
+                templateUrl: "views/MediaItemDetail.html"
             })
             .when(paths.series, {
                 templateUrl: "views/SeriesList.html"
+            })
+            .when(paths.serieDetail, {
+                controller: "SerieDetailController",
+                templateUrl: "views/MediaItemDetail.html"
             })
             .when(paths.people, {
                 templateUrl: "views/PeopleList.html"
@@ -19,7 +24,7 @@ angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
                 redirectTo: "/movies"
             })
             .otherwise({
-            	templateUrl: "views/404.html"
+                templateUrl: "views/404.html"
             })
     }]
 
