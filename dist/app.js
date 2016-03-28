@@ -36269,7 +36269,7 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
 		restrict: "AE",
 		scope: {
 			model: "=items",
-			getDetailUrl: "="
+			getDetailUrl: "&"
 		},
 		templateUrl: "views/mediaItemList.html"
 	};
