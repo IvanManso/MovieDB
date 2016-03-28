@@ -36261,9 +36261,48 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         );
 
 }]);
-;angular.module("moviedb").controller("SeriesListController", ["$scope", "APIClient", function($scope, APIClient){
+;angular.module("moviedb").controller("SeriesListController", ["$scope", "$log", "APIClient", "URL", "paths", function($scope, $log, APIClient, URL, paths) {
+
+    //Scope init
+    $scope.model = [];
+    $scope.uiState = "loading";
+
+    //Scope methods
+    $scope.getSerieDetailURL = function(serie){
+        return URL.resolve(paths.serieDetail, {id: serie.id});
+    };
+
+
+    //Controller start
+    APIClient.getSeries()
+        .then(
+            //promesa resuelta
+            function(data) {
+                $log.log("SUCCESS", data);
+                $scope.model = data;
+                if ($scope.model.length == 0) {
+                    $scope.uiState = "blank";
+                } else {
+                    $scope.uiState = "ideal";
+                }
+            },
+            //promesa rechazada
+            function(data) {
+                $log.error("Error", data);
+                $scope.uiState = "error";
+            }
+        );
 
 }]);
+;angular.module("moviedb").directive("mediaItem", function(){
+	return {
+		restrict: "AE",
+		templateUrl: "views/mediaItem.html",
+		scope: {
+			model: "=item"
+		}
+	};
+});
 ;angular.module("moviedb").directive("mediaItemList", function(){
 	return{
 		restrict: "AE",
@@ -36372,7 +36411,7 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         return deferred.promise;
     };
 
-    this.getSeries = function(serieId) {
+    this.getSerie = function(serieId) {
         var url = URL.resolve(apiPaths.serieDetail, { id: serieId });
         return this.apiRequest(url);
     };
@@ -36413,6 +36452,7 @@ angular.module("URL", []).service("URL", ["$log", function($log) {
 	movies: "/movies",
 	movieDetail: "/movies/:id",
 	series: "/series",
+	serieDetail: "/series/:id",
 	people: "/people",
 	notFound: "/sorry"
 });

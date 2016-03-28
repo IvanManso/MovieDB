@@ -71,7 +71,7 @@ angular.module("moviedb").service("APIClient", ["$http", "$q", "apiPaths", "URL"
         return deferred.promise;
     };
 
-    this.getSeries = function(serieId) {
+    this.getSerie = function(serieId) {
         var url = URL.resolve(apiPaths.serieDetail, { id: serieId });
         return this.apiRequest(url);
     };
