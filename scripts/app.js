@@ -1,5 +1,5 @@
 //Defino el módulo de "moviedb"
-angular.module("moviedb", ['ngRoute', "URL"]).config(
+angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
     ["$routeProvider", "paths", function($routeProvider, paths) {
         //Configuro las URLs de la app
         $routeProvider

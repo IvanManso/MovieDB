@@ -4,17 +4,20 @@ angular.module("moviedb").controller("MovieDetailController", ["$scope", "$route
     $scope.uiState = "loading";
 
     //Controller init
+    $scope.$emit("ChangeTitle", "Loading...");
     MovieService.getMovie($routeParams.id)
-    	.then(function(movie){
-    		//película encontrada
-    		$scope.model = movie;
-    		$scope.uiState = 'ideal';
-    	},
-    	function(error){
-    		//película no encontrada
-    		$location.url(paths.notFound);
-    	}
+        .then(function(movie) {
+                //película encontrada
+                $scope.model = movie;
+                $scope.uiState = 'ideal';
+                //Desde un hijo al padre
+                $scope.$emit("ChangeTitle", $scope.model.title);
+            },
+            function(error) {
+                //película no encontrada
+                $location.url(paths.notFound);
+            }
 
-    	);
+        );
 
 }]);

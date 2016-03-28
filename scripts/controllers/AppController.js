@@ -17,4 +17,8 @@ angular.module("moviedb").controller("AppController", ["$scope", "$location", "p
         $scope.model.title = controller.titles[$location.path()] || "404 Not found";
     });
 
+    $scope.$on("ChangeTitle", function(evt, title){
+        $scope.model.title = title;
+    });
+
 }]);

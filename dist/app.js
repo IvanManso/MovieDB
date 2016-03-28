@@ -3740,7 +3740,7 @@ function minErr(module, ErrorConstructor) {
       return match;
     });
 
-    message += '\nhttp://errors.angularjs.org/1.5.2/' +
+    message += '\nhttp://errors.angularjs.org/1.5.3/' +
       (module ? module + '/' : '') + code;
 
     for (i = SKIP_INDEXES, paramPrefix = '?'; i < templateArgs.length; i++, paramPrefix = '&') {
@@ -6126,11 +6126,11 @@ function toDebugString(obj) {
  * - `codeName` – `{string}` – Code name of the release, such as "jiggling-armfat".
  */
 var version = {
-  full: '1.5.2',    // all of these placeholder strings will be replaced by grunt's
+  full: '1.5.3',    // all of these placeholder strings will be replaced by grunt's
   major: 1,    // package task
   minor: 5,
-  dot: 2,
-  codeName: 'differential-recovery'
+  dot: 3,
+  codeName: 'diplohaplontic-meiosis'
 };
 
 
@@ -9545,7 +9545,14 @@ function Browser(window, document, $log, $sniffer) {
   var cachedState, lastHistoryState,
       lastBrowserUrl = location.href,
       baseElement = document.find('base'),
-      pendingLocation = null;
+      pendingLocation = null,
+      getCurrentState = !$sniffer.history ? noop : function getCurrentState() {
+        try {
+          return history.state;
+        } catch (e) {
+          // MSIE can reportedly throw when there is no state (UNCONFIRMED).
+        }
+      };
 
   cacheState();
   lastHistoryState = cachedState;
@@ -9651,14 +9658,6 @@ function Browser(window, document, $log, $sniffer) {
     pendingLocation = null;
     cacheState();
     fireUrlChange();
-  }
-
-  function getCurrentState() {
-    try {
-      return history.state;
-    } catch (e) {
-      // MSIE can reportedly throw when there is no state (UNCONFIRMED).
-    }
   }
 
   // This variable should be used *only* inside the cacheState function.
@@ -10512,9 +10511,23 @@ function $TemplateCacheProvider() {
  *    `true` if the specified slot contains content (i.e. one or more DOM nodes).
  *
  * The controller can provide the following methods that act as life-cycle hooks:
- * * `$onInit` - Called on each controller after all the controllers on an element have been constructed and
+ * * `$onInit()` - Called on each controller after all the controllers on an element have been constructed and
  *   had their bindings initialized (and before the pre &amp; post linking functions for the directives on
  *   this element). This is a good place to put initialization code for your controller.
+ * * `$onChanges(changesObj)` - Called whenever one-way (`<`) or interpolation (`@`) bindings are updated. The
+ *   `changesObj` is a hash whose keys are the names of the bound properties that have changed, and the values are an
+ *   object of the form `{ currentValue: ..., previousValue: ... }`. Use this hook to trigger updates within a component
+ *   such as cloning the bound value to prevent accidental mutation of the outer value.
+ * * `$onDestroy()` - Called on a controller when its containing scope is destroyed. Use this hook for releasing
+ *   external resources, watches and event handlers. Note that components have their `$onDestroy()` hooks called in
+ *   the same order as the `$scope.$broadcast` events are triggered, which is top down. This means that parent
+ *   components will have their `$onDestroy()` hook called before child components.
+ * * `$postLink()` - Called after this controller's element and its children have been linked. Similar to the post-link
+ *   function this hook can be used to set up DOM event handlers and do direct DOM manipulation.
+ *   Note that child elements that contain `templateUrl` directives will not have been compiled and linked since
+ *   they are waiting for their template to load asynchronously and their own compilation and linking has been
+ *   suspended until that occurs.
+ *
  *
  * #### `require`
  * Require another directive and inject its controller as the fourth argument to the linking function. The
@@ -11147,11 +11160,11 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
   function assertValidDirectiveName(name) {
     var letter = name.charAt(0);
     if (!letter || letter !== lowercase(letter)) {
-      throw $compileMinErr('baddir', "Directive name '{0}' is invalid. The first character must be a lowercase letter", name);
+      throw $compileMinErr('baddir', "Directive/Component name '{0}' is invalid. The first character must be a lowercase letter", name);
     }
     if (name !== name.trim()) {
       throw $compileMinErr('baddir',
-            "Directive name '{0}' is invalid. The name should not contain leading or trailing whitespaces",
+            "Directive/Component name '{0}' is invalid. The name should not contain leading or trailing whitespaces",
             name);
     }
   }
@@ -11426,6 +11439,36 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
     return debugInfoEnabled;
   };
 
+
+  var TTL = 10;
+  /**
+   * @ngdoc method
+   * @name $compileProvider#onChangesTtl
+   * @description
+   *
+   * Sets the number of times `$onChanges` hooks can trigger new changes before giving up and
+   * assuming that the model is unstable.
+   *
+   * The current default is 10 iterations.
+   *
+   * In complex applications it's possible that dependencies between `$onChanges` hooks and bindings will result
+   * in several iterations of calls to these hooks. However if an application needs more than the default 10
+   * iterations to stabilize then you should investigate what is causing the model to continuously change during
+   * the `$onChanges` hook execution.
+   *
+   * Increasing the TTL could have performance implications, so you should not change it without proper justification.
+   *
+   * @param {number} limit The number of `$onChanges` hook iterations.
+   * @returns {number|object} the current limit (or `this` if called as a setter for chaining)
+   */
+  this.onChangesTtl = function(value) {
+    if (arguments.length) {
+      TTL = value;
+      return this;
+    }
+    return TTL;
+  };
+
   this.$get = [
             '$injector', '$interpolate', '$exceptionHandler', '$templateRequest', '$parse',
             '$controller', '$rootScope', '$sce', '$animate', '$$sanitizeUri',
@@ -11434,6 +11477,36 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
 
     var SIMPLE_ATTR_NAME = /^\w/;
     var specialAttrHolder = document.createElement('div');
+
+
+
+    var onChangesTtl = TTL;
+    // The onChanges hooks should all be run together in a single digest
+    // When changes occur, the call to trigger their hooks will be added to this queue
+    var onChangesQueue;
+
+    // This function is called in a $$postDigest to trigger all the onChanges hooks in a single digest
+    function flushOnChangesQueue() {
+      try {
+        if (!(--onChangesTtl)) {
+          // We have hit the TTL limit so reset everything
+          onChangesQueue = undefined;
+          throw $compileMinErr('infchng', '{0} $onChanges() iterations reached. Aborting!\n', TTL);
+        }
+        // We must run this hook in an apply since the $$postDigest runs outside apply
+        $rootScope.$apply(function() {
+          for (var i = 0, ii = onChangesQueue.length; i < ii; ++i) {
+            onChangesQueue[i]();
+          }
+          // Reset the queue to trigger a new schedule next time there is a change
+          onChangesQueue = undefined;
+        });
+      } finally {
+        onChangesTtl++;
+      }
+    }
+
+
     function Attributes(element, attributesToCopy) {
       if (attributesToCopy) {
         var keys = Object.keys(attributesToCopy);
@@ -12299,6 +12372,17 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             compileNode = $compileNode[0];
             replaceWith(jqCollection, sliceArgs($template), compileNode);
 
+            // Support: Chrome < 50
+            // https://github.com/angular/angular.js/issues/14041
+
+            // In the versions of V8 prior to Chrome 50, the document fragment that is created
+            // in the `replaceWith` function is improperly garbage collected despite still
+            // being referenced by the `parentNode` property of all of the child nodes.  By adding
+            // a reference to the fragment via a different property, we can avoid that incorrect
+            // behavior.
+            // TODO: remove this line after Chrome 50 has been released
+            $template[0].$$parentNode = $template[0].parentNode;
+
             childTranscludeFn = compilationGenerator(mightHaveMultipleTransclusionError, $template, transcludeFn, terminalPriority,
                                         replaceDirective && replaceDirective.name, {
                                           // Don't pass in:
@@ -12581,10 +12665,16 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
           }
         });
 
-        // Trigger the `$onInit` method on all controllers that have one
+        // Handle the init and destroy lifecycle hooks on all controllers that have them
         forEach(elementControllers, function(controller) {
-          if (isFunction(controller.instance.$onInit)) {
-            controller.instance.$onInit();
+          var controllerInstance = controller.instance;
+          if (isFunction(controllerInstance.$onInit)) {
+            controllerInstance.$onInit();
+          }
+          if (isFunction(controllerInstance.$onDestroy)) {
+            controllerScope.$on('$destroy', function callOnDestroyHook() {
+              controllerInstance.$onDestroy();
+            });
           }
         });
 
@@ -12620,6 +12710,14 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
               transcludeFn
           );
         }
+
+        // Trigger $postLink lifecycle hooks
+        forEach(elementControllers, function(controller) {
+          var controllerInstance = controller.instance;
+          if (isFunction(controllerInstance.$postLink)) {
+            controllerInstance.$postLink();
+          }
+        });
 
         // This is the function that is injected as `$transclude`.
         // Note: all arguments are optional!
@@ -13216,6 +13314,7 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
     // only occurs for isolate scopes and new scopes with controllerAs.
     function initializeDirectiveBindings(scope, attrs, destination, bindings, directive) {
       var removeWatchCollection = [];
+      var changes;
       forEach(bindings, function initializeBinding(definition, scopeName) {
         var attrName = definition.attrName,
         optional = definition.optional,
@@ -13231,6 +13330,8 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             }
             attrs.$observe(attrName, function(value) {
               if (isString(value)) {
+                var oldValue = destination[scopeName];
+                recordChanges(scopeName, value, oldValue);
                 destination[scopeName] = value;
               }
             });
@@ -13302,6 +13403,8 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             destination[scopeName] = parentGet(scope);
 
             removeWatch = scope.$watch(parentGet, function parentValueWatchAction(newParentValue) {
+              var oldValue = destination[scopeName];
+              recordChanges(scopeName, newParentValue, oldValue);
               destination[scopeName] = newParentValue;
             }, parentGet.literal);
 
@@ -13321,6 +13424,33 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             break;
         }
       });
+
+      function recordChanges(key, currentValue, previousValue) {
+        if (isFunction(destination.$onChanges) && currentValue !== previousValue) {
+          // If we have not already scheduled the top level onChangesQueue handler then do so now
+          if (!onChangesQueue) {
+            scope.$$postDigest(flushOnChangesQueue);
+            onChangesQueue = [];
+          }
+          // If we have not already queued a trigger of onChanges for this controller then do so now
+          if (!changes) {
+            changes = {};
+            onChangesQueue.push(triggerOnChangesHook);
+          }
+          // If the has been a change on this property already then we need to reuse the previous value
+          if (changes[key]) {
+            previousValue = changes[key].previousValue;
+          }
+          // Store this change
+          changes[key] = {previousValue: previousValue, currentValue: currentValue};
+        }
+      }
+
+      function triggerOnChangesHook() {
+        destination.$onChanges(changes);
+        // Now clear the changes so that we schedule onChanges when more changes arrive
+        changes = undefined;
+      }
 
       return removeWatchCollection.length && function removeWatches() {
         for (var i = 0, ii = removeWatchCollection.length; i < ii; ++i) {
@@ -19008,15 +19138,15 @@ function $ParseProvider() {
  * [Kris Kowal's Q](https://github.com/kriskowal/q).
  *
  * $q can be used in two fashions --- one which is more similar to Kris Kowal's Q or jQuery's Deferred
- * implementations, and the other which resembles ES6 promises to some degree.
+ * implementations, and the other which resembles ES6 (ES2015) promises to some degree.
  *
  * # $q constructor
  *
  * The streamlined ES6 style promise is essentially just using $q as a constructor which takes a `resolver`
- * function as the first argument. This is similar to the native Promise implementation from ES6 Harmony,
+ * function as the first argument. This is similar to the native Promise implementation from ES6,
  * see [MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise).
  *
- * While the constructor-style use is supported, not all of the supporting methods from ES6 Harmony promises are
+ * While the constructor-style use is supported, not all of the supporting methods from ES6 promises are
  * available yet.
  *
  * It can be used like so:
@@ -22154,6 +22284,10 @@ function $SceProvider() {
 function $SnifferProvider() {
   this.$get = ['$window', '$document', function($window, $document) {
     var eventSupport = {},
+        // Chrome Packaged Apps are not allowed to access `history.pushState`. They can be detected by
+        // the presence of `chrome.app.runtime` (see https://developer.chrome.com/apps/api_index)
+        isChromePackagedApp = $window.chrome && $window.chrome.app && $window.chrome.app.runtime,
+        hasHistoryPushState = !isChromePackagedApp && $window.history && $window.history.pushState,
         android =
           toInt((/android (\d+)/.exec(lowercase(($window.navigator || {}).userAgent)) || [])[1]),
         boxee = /Boxee/i.test(($window.navigator || {}).userAgent),
@@ -22198,7 +22332,7 @@ function $SnifferProvider() {
       // so let's not use the history API also
       // We are purposefully using `!(android < 4)` to cover the case when `android` is undefined
       // jshint -W018
-      history: !!($window.history && $window.history.pushState && !(android < 4) && !boxee),
+      history: !!(hasHistoryPushState && !(android < 4) && !boxee),
       // jshint +W018
       hasEvent: function(event) {
         // IE9 implements 'input' event it's so fubared that we rather pretend that it doesn't have
@@ -23480,7 +23614,7 @@ function formatNumber(number, pattern, groupSep, decimalSep, fractionSize) {
 
     // format the integer digits with grouping separators
     var groups = [];
-    if (digits.length > pattern.lgSize) {
+    if (digits.length >= pattern.lgSize) {
       groups.unshift(digits.splice(-pattern.lgSize).join(''));
     }
     while (digits.length > pattern.gSize) {
@@ -25716,7 +25850,7 @@ var inputType = {
         }]);
      </script>
      <form name="myForm" ng-controller="DateController as dateCtrl">
-        <label for="exampleInput">Pick a between 8am and 5pm:</label>
+        <label for="exampleInput">Pick a time between 8am and 5pm:</label>
         <input type="time" id="exampleInput" name="input" ng-model="example.value"
             placeholder="HH:mm:ss" min="08:00:00" max="17:00:00" required />
         <div role="alert">
@@ -35279,8 +35413,721 @@ function ngViewFillContentFactory($compile, $controller, $route) {
 
 })(window, window.angular);
 
+;(function(window, angular, undefined) {'use strict';
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *     Any commits to this file should be reviewed with security in mind.  *
+ *   Changes to this file can potentially create security vulnerabilities. *
+ *          An approval from 2 Core members with history of modifying      *
+ *                         this file is required.                          *
+ *                                                                         *
+ *  Does the change somehow allow for arbitrary javascript to be executed? *
+ *    Or allows for someone to change the prototype of built-in objects?   *
+ *     Or gives undesired access to variables likes document or window?    *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+var $sanitizeMinErr = angular.$$minErr('$sanitize');
+
+/**
+ * @ngdoc module
+ * @name ngSanitize
+ * @description
+ *
+ * # ngSanitize
+ *
+ * The `ngSanitize` module provides functionality to sanitize HTML.
+ *
+ *
+ * <div doc-module-components="ngSanitize"></div>
+ *
+ * See {@link ngSanitize.$sanitize `$sanitize`} for usage.
+ */
+
+/**
+ * @ngdoc service
+ * @name $sanitize
+ * @kind function
+ *
+ * @description
+ *   Sanitizes an html string by stripping all potentially dangerous tokens.
+ *
+ *   The input is sanitized by parsing the HTML into tokens. All safe tokens (from a whitelist) are
+ *   then serialized back to properly escaped html string. This means that no unsafe input can make
+ *   it into the returned string.
+ *
+ *   The whitelist for URL sanitization of attribute values is configured using the functions
+ *   `aHrefSanitizationWhitelist` and `imgSrcSanitizationWhitelist` of {@link ng.$compileProvider
+ *   `$compileProvider`}.
+ *
+ *   The input may also contain SVG markup if this is enabled via {@link $sanitizeProvider}.
+ *
+ * @param {string} html HTML input.
+ * @returns {string} Sanitized HTML.
+ *
+ * @example
+   <example module="sanitizeExample" deps="angular-sanitize.js">
+   <file name="index.html">
+     <script>
+         angular.module('sanitizeExample', ['ngSanitize'])
+           .controller('ExampleController', ['$scope', '$sce', function($scope, $sce) {
+             $scope.snippet =
+               '<p style="color:blue">an html\n' +
+               '<em onmouseover="this.textContent=\'PWN3D!\'">click here</em>\n' +
+               'snippet</p>';
+             $scope.deliberatelyTrustDangerousSnippet = function() {
+               return $sce.trustAsHtml($scope.snippet);
+             };
+           }]);
+     </script>
+     <div ng-controller="ExampleController">
+        Snippet: <textarea ng-model="snippet" cols="60" rows="3"></textarea>
+       <table>
+         <tr>
+           <td>Directive</td>
+           <td>How</td>
+           <td>Source</td>
+           <td>Rendered</td>
+         </tr>
+         <tr id="bind-html-with-sanitize">
+           <td>ng-bind-html</td>
+           <td>Automatically uses $sanitize</td>
+           <td><pre>&lt;div ng-bind-html="snippet"&gt;<br/>&lt;/div&gt;</pre></td>
+           <td><div ng-bind-html="snippet"></div></td>
+         </tr>
+         <tr id="bind-html-with-trust">
+           <td>ng-bind-html</td>
+           <td>Bypass $sanitize by explicitly trusting the dangerous value</td>
+           <td>
+           <pre>&lt;div ng-bind-html="deliberatelyTrustDangerousSnippet()"&gt;
+&lt;/div&gt;</pre>
+           </td>
+           <td><div ng-bind-html="deliberatelyTrustDangerousSnippet()"></div></td>
+         </tr>
+         <tr id="bind-default">
+           <td>ng-bind</td>
+           <td>Automatically escapes</td>
+           <td><pre>&lt;div ng-bind="snippet"&gt;<br/>&lt;/div&gt;</pre></td>
+           <td><div ng-bind="snippet"></div></td>
+         </tr>
+       </table>
+       </div>
+   </file>
+   <file name="protractor.js" type="protractor">
+     it('should sanitize the html snippet by default', function() {
+       expect(element(by.css('#bind-html-with-sanitize div')).getInnerHtml()).
+         toBe('<p>an html\n<em>click here</em>\nsnippet</p>');
+     });
+
+     it('should inline raw snippet if bound to a trusted value', function() {
+       expect(element(by.css('#bind-html-with-trust div')).getInnerHtml()).
+         toBe("<p style=\"color:blue\">an html\n" +
+              "<em onmouseover=\"this.textContent='PWN3D!'\">click here</em>\n" +
+              "snippet</p>");
+     });
+
+     it('should escape snippet without any filter', function() {
+       expect(element(by.css('#bind-default div')).getInnerHtml()).
+         toBe("&lt;p style=\"color:blue\"&gt;an html\n" +
+              "&lt;em onmouseover=\"this.textContent='PWN3D!'\"&gt;click here&lt;/em&gt;\n" +
+              "snippet&lt;/p&gt;");
+     });
+
+     it('should update', function() {
+       element(by.model('snippet')).clear();
+       element(by.model('snippet')).sendKeys('new <b onclick="alert(1)">text</b>');
+       expect(element(by.css('#bind-html-with-sanitize div')).getInnerHtml()).
+         toBe('new <b>text</b>');
+       expect(element(by.css('#bind-html-with-trust div')).getInnerHtml()).toBe(
+         'new <b onclick="alert(1)">text</b>');
+       expect(element(by.css('#bind-default div')).getInnerHtml()).toBe(
+         "new &lt;b onclick=\"alert(1)\"&gt;text&lt;/b&gt;");
+     });
+   </file>
+   </example>
+ */
+
+
+/**
+ * @ngdoc provider
+ * @name $sanitizeProvider
+ *
+ * @description
+ * Creates and configures {@link $sanitize} instance.
+ */
+function $SanitizeProvider() {
+  var svgEnabled = false;
+
+  this.$get = ['$$sanitizeUri', function($$sanitizeUri) {
+    if (svgEnabled) {
+      angular.extend(validElements, svgElements);
+    }
+    return function(html) {
+      var buf = [];
+      htmlParser(html, htmlSanitizeWriter(buf, function(uri, isImage) {
+        return !/^unsafe:/.test($$sanitizeUri(uri, isImage));
+      }));
+      return buf.join('');
+    };
+  }];
+
+
+  /**
+   * @ngdoc method
+   * @name $sanitizeProvider#enableSvg
+   * @kind function
+   *
+   * @description
+   * Enables a subset of svg to be supported by the sanitizer.
+   *
+   * <div class="alert alert-warning">
+   *   <p>By enabling this setting without taking other precautions, you might expose your
+   *   application to click-hijacking attacks. In these attacks, sanitized svg elements could be positioned
+   *   outside of the containing element and be rendered over other elements on the page (e.g. a login
+   *   link). Such behavior can then result in phishing incidents.</p>
+   *
+   *   <p>To protect against these, explicitly setup `overflow: hidden` css rule for all potential svg
+   *   tags within the sanitized content:</p>
+   *
+   *   <br>
+   *
+   *   <pre><code>
+   *   .rootOfTheIncludedContent svg {
+   *     overflow: hidden !important;
+   *   }
+   *   </code></pre>
+   * </div>
+   *
+   * @param {boolean=} regexp New regexp to whitelist urls with.
+   * @returns {boolean|ng.$sanitizeProvider} Returns the currently configured value if called
+   *    without an argument or self for chaining otherwise.
+   */
+  this.enableSvg = function(enableSvg) {
+    if (angular.isDefined(enableSvg)) {
+      svgEnabled = enableSvg;
+      return this;
+    } else {
+      return svgEnabled;
+    }
+  };
+}
+
+function sanitizeText(chars) {
+  var buf = [];
+  var writer = htmlSanitizeWriter(buf, angular.noop);
+  writer.chars(chars);
+  return buf.join('');
+}
+
+
+// Regular Expressions for parsing tags and attributes
+var SURROGATE_PAIR_REGEXP = /[\uD800-\uDBFF][\uDC00-\uDFFF]/g,
+  // Match everything outside of normal chars and " (quote character)
+  NON_ALPHANUMERIC_REGEXP = /([^\#-~ |!])/g;
+
+
+// Good source of info about elements and attributes
+// http://dev.w3.org/html5/spec/Overview.html#semantics
+// http://simon.html5.org/html-elements
+
+// Safe Void Elements - HTML5
+// http://dev.w3.org/html5/spec/Overview.html#void-elements
+var voidElements = toMap("area,br,col,hr,img,wbr");
+
+// Elements that you can, intentionally, leave open (and which close themselves)
+// http://dev.w3.org/html5/spec/Overview.html#optional-tags
+var optionalEndTagBlockElements = toMap("colgroup,dd,dt,li,p,tbody,td,tfoot,th,thead,tr"),
+    optionalEndTagInlineElements = toMap("rp,rt"),
+    optionalEndTagElements = angular.extend({},
+                                            optionalEndTagInlineElements,
+                                            optionalEndTagBlockElements);
+
+// Safe Block Elements - HTML5
+var blockElements = angular.extend({}, optionalEndTagBlockElements, toMap("address,article," +
+        "aside,blockquote,caption,center,del,dir,div,dl,figure,figcaption,footer,h1,h2,h3,h4,h5," +
+        "h6,header,hgroup,hr,ins,map,menu,nav,ol,pre,section,table,ul"));
+
+// Inline Elements - HTML5
+var inlineElements = angular.extend({}, optionalEndTagInlineElements, toMap("a,abbr,acronym,b," +
+        "bdi,bdo,big,br,cite,code,del,dfn,em,font,i,img,ins,kbd,label,map,mark,q,ruby,rp,rt,s," +
+        "samp,small,span,strike,strong,sub,sup,time,tt,u,var"));
+
+// SVG Elements
+// https://wiki.whatwg.org/wiki/Sanitization_rules#svg_Elements
+// Note: the elements animate,animateColor,animateMotion,animateTransform,set are intentionally omitted.
+// They can potentially allow for arbitrary javascript to be executed. See #11290
+var svgElements = toMap("circle,defs,desc,ellipse,font-face,font-face-name,font-face-src,g,glyph," +
+        "hkern,image,linearGradient,line,marker,metadata,missing-glyph,mpath,path,polygon,polyline," +
+        "radialGradient,rect,stop,svg,switch,text,title,tspan");
+
+// Blocked Elements (will be stripped)
+var blockedElements = toMap("script,style");
+
+var validElements = angular.extend({},
+                                   voidElements,
+                                   blockElements,
+                                   inlineElements,
+                                   optionalEndTagElements);
+
+//Attributes that have href and hence need to be sanitized
+var uriAttrs = toMap("background,cite,href,longdesc,src,xlink:href");
+
+var htmlAttrs = toMap('abbr,align,alt,axis,bgcolor,border,cellpadding,cellspacing,class,clear,' +
+    'color,cols,colspan,compact,coords,dir,face,headers,height,hreflang,hspace,' +
+    'ismap,lang,language,nohref,nowrap,rel,rev,rows,rowspan,rules,' +
+    'scope,scrolling,shape,size,span,start,summary,tabindex,target,title,type,' +
+    'valign,value,vspace,width');
+
+// SVG attributes (without "id" and "name" attributes)
+// https://wiki.whatwg.org/wiki/Sanitization_rules#svg_Attributes
+var svgAttrs = toMap('accent-height,accumulate,additive,alphabetic,arabic-form,ascent,' +
+    'baseProfile,bbox,begin,by,calcMode,cap-height,class,color,color-rendering,content,' +
+    'cx,cy,d,dx,dy,descent,display,dur,end,fill,fill-rule,font-family,font-size,font-stretch,' +
+    'font-style,font-variant,font-weight,from,fx,fy,g1,g2,glyph-name,gradientUnits,hanging,' +
+    'height,horiz-adv-x,horiz-origin-x,ideographic,k,keyPoints,keySplines,keyTimes,lang,' +
+    'marker-end,marker-mid,marker-start,markerHeight,markerUnits,markerWidth,mathematical,' +
+    'max,min,offset,opacity,orient,origin,overline-position,overline-thickness,panose-1,' +
+    'path,pathLength,points,preserveAspectRatio,r,refX,refY,repeatCount,repeatDur,' +
+    'requiredExtensions,requiredFeatures,restart,rotate,rx,ry,slope,stemh,stemv,stop-color,' +
+    'stop-opacity,strikethrough-position,strikethrough-thickness,stroke,stroke-dasharray,' +
+    'stroke-dashoffset,stroke-linecap,stroke-linejoin,stroke-miterlimit,stroke-opacity,' +
+    'stroke-width,systemLanguage,target,text-anchor,to,transform,type,u1,u2,underline-position,' +
+    'underline-thickness,unicode,unicode-range,units-per-em,values,version,viewBox,visibility,' +
+    'width,widths,x,x-height,x1,x2,xlink:actuate,xlink:arcrole,xlink:role,xlink:show,xlink:title,' +
+    'xlink:type,xml:base,xml:lang,xml:space,xmlns,xmlns:xlink,y,y1,y2,zoomAndPan', true);
+
+var validAttrs = angular.extend({},
+                                uriAttrs,
+                                svgAttrs,
+                                htmlAttrs);
+
+function toMap(str, lowercaseKeys) {
+  var obj = {}, items = str.split(','), i;
+  for (i = 0; i < items.length; i++) {
+    obj[lowercaseKeys ? angular.lowercase(items[i]) : items[i]] = true;
+  }
+  return obj;
+}
+
+var inertBodyElement;
+(function(window) {
+  var doc;
+  if (window.document && window.document.implementation) {
+    doc = window.document.implementation.createHTMLDocument("inert");
+  } else {
+    throw $sanitizeMinErr('noinert', "Can't create an inert html document");
+  }
+  var docElement = doc.documentElement || doc.getDocumentElement();
+  var bodyElements = docElement.getElementsByTagName('body');
+
+  // usually there should be only one body element in the document, but IE doesn't have any, so we need to create one
+  if (bodyElements.length === 1) {
+    inertBodyElement = bodyElements[0];
+  } else {
+    var html = doc.createElement('html');
+    inertBodyElement = doc.createElement('body');
+    html.appendChild(inertBodyElement);
+    doc.appendChild(html);
+  }
+})(window);
+
+/**
+ * @example
+ * htmlParser(htmlString, {
+ *     start: function(tag, attrs) {},
+ *     end: function(tag) {},
+ *     chars: function(text) {},
+ *     comment: function(text) {}
+ * });
+ *
+ * @param {string} html string
+ * @param {object} handler
+ */
+function htmlParser(html, handler) {
+  if (html === null || html === undefined) {
+    html = '';
+  } else if (typeof html !== 'string') {
+    html = '' + html;
+  }
+  inertBodyElement.innerHTML = html;
+
+  //mXSS protection
+  var mXSSAttempts = 5;
+  do {
+    if (mXSSAttempts === 0) {
+      throw $sanitizeMinErr('uinput', "Failed to sanitize html because the input is unstable");
+    }
+    mXSSAttempts--;
+
+    // strip custom-namespaced attributes on IE<=11
+    if (document.documentMode <= 11) {
+      stripCustomNsAttrs(inertBodyElement);
+    }
+    html = inertBodyElement.innerHTML; //trigger mXSS
+    inertBodyElement.innerHTML = html;
+  } while (html !== inertBodyElement.innerHTML);
+
+  var node = inertBodyElement.firstChild;
+  while (node) {
+    switch (node.nodeType) {
+      case 1: // ELEMENT_NODE
+        handler.start(node.nodeName.toLowerCase(), attrToMap(node.attributes));
+        break;
+      case 3: // TEXT NODE
+        handler.chars(node.textContent);
+        break;
+    }
+
+    var nextNode;
+    if (!(nextNode = node.firstChild)) {
+      if (node.nodeType == 1) {
+        handler.end(node.nodeName.toLowerCase());
+      }
+      nextNode = node.nextSibling;
+      if (!nextNode) {
+        while (nextNode == null) {
+          node = node.parentNode;
+          if (node === inertBodyElement) break;
+          nextNode = node.nextSibling;
+          if (node.nodeType == 1) {
+            handler.end(node.nodeName.toLowerCase());
+          }
+        }
+      }
+    }
+    node = nextNode;
+  }
+
+  while (node = inertBodyElement.firstChild) {
+    inertBodyElement.removeChild(node);
+  }
+}
+
+function attrToMap(attrs) {
+  var map = {};
+  for (var i = 0, ii = attrs.length; i < ii; i++) {
+    var attr = attrs[i];
+    map[attr.name] = attr.value;
+  }
+  return map;
+}
+
+
+/**
+ * Escapes all potentially dangerous characters, so that the
+ * resulting string can be safely inserted into attribute or
+ * element text.
+ * @param value
+ * @returns {string} escaped text
+ */
+function encodeEntities(value) {
+  return value.
+    replace(/&/g, '&amp;').
+    replace(SURROGATE_PAIR_REGEXP, function(value) {
+      var hi = value.charCodeAt(0);
+      var low = value.charCodeAt(1);
+      return '&#' + (((hi - 0xD800) * 0x400) + (low - 0xDC00) + 0x10000) + ';';
+    }).
+    replace(NON_ALPHANUMERIC_REGEXP, function(value) {
+      return '&#' + value.charCodeAt(0) + ';';
+    }).
+    replace(/</g, '&lt;').
+    replace(/>/g, '&gt;');
+}
+
+/**
+ * create an HTML/XML writer which writes to buffer
+ * @param {Array} buf use buf.join('') to get out sanitized html string
+ * @returns {object} in the form of {
+ *     start: function(tag, attrs) {},
+ *     end: function(tag) {},
+ *     chars: function(text) {},
+ *     comment: function(text) {}
+ * }
+ */
+function htmlSanitizeWriter(buf, uriValidator) {
+  var ignoreCurrentElement = false;
+  var out = angular.bind(buf, buf.push);
+  return {
+    start: function(tag, attrs) {
+      tag = angular.lowercase(tag);
+      if (!ignoreCurrentElement && blockedElements[tag]) {
+        ignoreCurrentElement = tag;
+      }
+      if (!ignoreCurrentElement && validElements[tag] === true) {
+        out('<');
+        out(tag);
+        angular.forEach(attrs, function(value, key) {
+          var lkey=angular.lowercase(key);
+          var isImage = (tag === 'img' && lkey === 'src') || (lkey === 'background');
+          if (validAttrs[lkey] === true &&
+            (uriAttrs[lkey] !== true || uriValidator(value, isImage))) {
+            out(' ');
+            out(key);
+            out('="');
+            out(encodeEntities(value));
+            out('"');
+          }
+        });
+        out('>');
+      }
+    },
+    end: function(tag) {
+      tag = angular.lowercase(tag);
+      if (!ignoreCurrentElement && validElements[tag] === true && voidElements[tag] !== true) {
+        out('</');
+        out(tag);
+        out('>');
+      }
+      if (tag == ignoreCurrentElement) {
+        ignoreCurrentElement = false;
+      }
+    },
+    chars: function(chars) {
+      if (!ignoreCurrentElement) {
+        out(encodeEntities(chars));
+      }
+    }
+  };
+}
+
+
+/**
+ * When IE9-11 comes across an unknown namespaced attribute e.g. 'xlink:foo' it adds 'xmlns:ns1' attribute to declare
+ * ns1 namespace and prefixes the attribute with 'ns1' (e.g. 'ns1:xlink:foo'). This is undesirable since we don't want
+ * to allow any of these custom attributes. This method strips them all.
+ *
+ * @param node Root element to process
+ */
+function stripCustomNsAttrs(node) {
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    var attrs = node.attributes;
+    for (var i = 0, l = attrs.length; i < l; i++) {
+      var attrNode = attrs[i];
+      var attrName = attrNode.name.toLowerCase();
+      if (attrName === 'xmlns:ns1' || attrName.indexOf('ns1:') === 0) {
+        node.removeAttributeNode(attrNode);
+        i--;
+        l--;
+      }
+    }
+  }
+
+  var nextNode = node.firstChild;
+  if (nextNode) {
+    stripCustomNsAttrs(nextNode);
+  }
+
+  nextNode = node.nextSibling;
+  if (nextNode) {
+    stripCustomNsAttrs(nextNode);
+  }
+}
+
+
+
+// define ngSanitize module and register $sanitize service
+angular.module('ngSanitize', []).provider('$sanitize', $SanitizeProvider);
+
+/* global sanitizeText: false */
+
+/**
+ * @ngdoc filter
+ * @name linky
+ * @kind function
+ *
+ * @description
+ * Finds links in text input and turns them into html links. Supports `http/https/ftp/mailto` and
+ * plain email address links.
+ *
+ * Requires the {@link ngSanitize `ngSanitize`} module to be installed.
+ *
+ * @param {string} text Input text.
+ * @param {string} target Window (`_blank|_self|_parent|_top`) or named frame to open links in.
+ * @param {object|function(url)} [attributes] Add custom attributes to the link element.
+ *
+ *    Can be one of:
+ *
+ *    - `object`: A map of attributes
+ *    - `function`: Takes the url as a parameter and returns a map of attributes
+ *
+ *    If the map of attributes contains a value for `target`, it overrides the value of
+ *    the target parameter.
+ *
+ *
+ * @returns {string} Html-linkified and {@link $sanitize sanitized} text.
+ *
+ * @usage
+   <span ng-bind-html="linky_expression | linky"></span>
+ *
+ * @example
+   <example module="linkyExample" deps="angular-sanitize.js">
+     <file name="index.html">
+       <div ng-controller="ExampleController">
+       Snippet: <textarea ng-model="snippet" cols="60" rows="3"></textarea>
+       <table>
+         <tr>
+           <th>Filter</th>
+           <th>Source</th>
+           <th>Rendered</th>
+         </tr>
+         <tr id="linky-filter">
+           <td>linky filter</td>
+           <td>
+             <pre>&lt;div ng-bind-html="snippet | linky"&gt;<br>&lt;/div&gt;</pre>
+           </td>
+           <td>
+             <div ng-bind-html="snippet | linky"></div>
+           </td>
+         </tr>
+         <tr id="linky-target">
+          <td>linky target</td>
+          <td>
+            <pre>&lt;div ng-bind-html="snippetWithSingleURL | linky:'_blank'"&gt;<br>&lt;/div&gt;</pre>
+          </td>
+          <td>
+            <div ng-bind-html="snippetWithSingleURL | linky:'_blank'"></div>
+          </td>
+         </tr>
+         <tr id="linky-custom-attributes">
+          <td>linky custom attributes</td>
+          <td>
+            <pre>&lt;div ng-bind-html="snippetWithSingleURL | linky:'_self':{rel: 'nofollow'}"&gt;<br>&lt;/div&gt;</pre>
+          </td>
+          <td>
+            <div ng-bind-html="snippetWithSingleURL | linky:'_self':{rel: 'nofollow'}"></div>
+          </td>
+         </tr>
+         <tr id="escaped-html">
+           <td>no filter</td>
+           <td><pre>&lt;div ng-bind="snippet"&gt;<br>&lt;/div&gt;</pre></td>
+           <td><div ng-bind="snippet"></div></td>
+         </tr>
+       </table>
+     </file>
+     <file name="script.js">
+       angular.module('linkyExample', ['ngSanitize'])
+         .controller('ExampleController', ['$scope', function($scope) {
+           $scope.snippet =
+             'Pretty text with some links:\n'+
+             'http://angularjs.org/,\n'+
+             'mailto:us@somewhere.org,\n'+
+             'another@somewhere.org,\n'+
+             'and one more: ftp://127.0.0.1/.';
+           $scope.snippetWithSingleURL = 'http://angularjs.org/';
+         }]);
+     </file>
+     <file name="protractor.js" type="protractor">
+       it('should linkify the snippet with urls', function() {
+         expect(element(by.id('linky-filter')).element(by.binding('snippet | linky')).getText()).
+             toBe('Pretty text with some links: http://angularjs.org/, us@somewhere.org, ' +
+                  'another@somewhere.org, and one more: ftp://127.0.0.1/.');
+         expect(element.all(by.css('#linky-filter a')).count()).toEqual(4);
+       });
+
+       it('should not linkify snippet without the linky filter', function() {
+         expect(element(by.id('escaped-html')).element(by.binding('snippet')).getText()).
+             toBe('Pretty text with some links: http://angularjs.org/, mailto:us@somewhere.org, ' +
+                  'another@somewhere.org, and one more: ftp://127.0.0.1/.');
+         expect(element.all(by.css('#escaped-html a')).count()).toEqual(0);
+       });
+
+       it('should update', function() {
+         element(by.model('snippet')).clear();
+         element(by.model('snippet')).sendKeys('new http://link.');
+         expect(element(by.id('linky-filter')).element(by.binding('snippet | linky')).getText()).
+             toBe('new http://link.');
+         expect(element.all(by.css('#linky-filter a')).count()).toEqual(1);
+         expect(element(by.id('escaped-html')).element(by.binding('snippet')).getText())
+             .toBe('new http://link.');
+       });
+
+       it('should work with the target property', function() {
+        expect(element(by.id('linky-target')).
+            element(by.binding("snippetWithSingleURL | linky:'_blank'")).getText()).
+            toBe('http://angularjs.org/');
+        expect(element(by.css('#linky-target a')).getAttribute('target')).toEqual('_blank');
+       });
+
+       it('should optionally add custom attributes', function() {
+        expect(element(by.id('linky-custom-attributes')).
+            element(by.binding("snippetWithSingleURL | linky:'_self':{rel: 'nofollow'}")).getText()).
+            toBe('http://angularjs.org/');
+        expect(element(by.css('#linky-custom-attributes a')).getAttribute('rel')).toEqual('nofollow');
+       });
+     </file>
+   </example>
+ */
+angular.module('ngSanitize').filter('linky', ['$sanitize', function($sanitize) {
+  var LINKY_URL_REGEXP =
+        /((ftp|https?):\/\/|(www\.)|(mailto:)?[A-Za-z0-9._%+-]+@)\S*[^\s.;,(){}<>"\u201d\u2019]/i,
+      MAILTO_REGEXP = /^mailto:/i;
+
+  var linkyMinErr = angular.$$minErr('linky');
+  var isString = angular.isString;
+
+  return function(text, target, attributes) {
+    if (text == null || text === '') return text;
+    if (!isString(text)) throw linkyMinErr('notstring', 'Expected string but received: {0}', text);
+
+    var match;
+    var raw = text;
+    var html = [];
+    var url;
+    var i;
+    while ((match = raw.match(LINKY_URL_REGEXP))) {
+      // We can not end in these as they are sometimes found at the end of the sentence
+      url = match[0];
+      // if we did not match ftp/http/www/mailto then assume mailto
+      if (!match[2] && !match[4]) {
+        url = (match[3] ? 'http://' : 'mailto:') + url;
+      }
+      i = match.index;
+      addText(raw.substr(0, i));
+      addLink(url, match[0].replace(MAILTO_REGEXP, ''));
+      raw = raw.substring(i + match[0].length);
+    }
+    addText(raw);
+    return $sanitize(html.join(''));
+
+    function addText(text) {
+      if (!text) {
+        return;
+      }
+      html.push(sanitizeText(text));
+    }
+
+    function addLink(url, text) {
+      var key;
+      html.push('<a ');
+      if (angular.isFunction(attributes)) {
+        attributes = attributes(url);
+      }
+      if (angular.isObject(attributes)) {
+        for (key in attributes) {
+          html.push(key + '="' + attributes[key] + '" ');
+        }
+      } else {
+        attributes = {};
+      }
+      if (angular.isDefined(target) && !('target' in attributes)) {
+        html.push('target="',
+                  target,
+                  '" ');
+      }
+      html.push('href="',
+                url.replace(/"/g, '&quot;'),
+                '">');
+      addText(text);
+      html.push('</a>');
+    }
+  };
+}]);
+
+
+})(window, window.angular);
+
 ;//Defino el módulo de "moviedb"
-angular.module("moviedb", ['ngRoute', "URL"]).config(
+angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
     ["$routeProvider", "paths", function($routeProvider, paths) {
         //Configuro las URLs de la app
         $routeProvider
@@ -35324,6 +36171,10 @@ angular.module("moviedb", ['ngRoute', "URL"]).config(
         $scope.model.title = controller.titles[$location.path()] || "404 Not found";
     });
 
+    $scope.$on("ChangeTitle", function(evt, title){
+        $scope.model.title = title;
+    });
+
 }]);
 ;//En el  módulo moviedb, defino el controlador
 angular.module("moviedb").controller("MenuController", ["$scope", "$location", "paths", function($scope, $location, paths) {
@@ -35359,20 +36210,24 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
     $scope.uiState = "loading";
 
     //Controller init
+    $scope.$emit("ChangeTitle", "Loading...");
     MovieService.getMovie($routeParams.id)
-    	.then(function(movie){
-    		//película encontrada
-    		$scope.model = movie;
-    		$scope.uiState = 'ideal';
-    	},
-    	function(error){
-    		//película no encontrada
-    		$location.url(paths.notFound);
-    	}
+        .then(function(movie) {
+                //película encontrada
+                $scope.model = movie;
+                $scope.uiState = 'ideal';
+                //Desde un hijo al padre
+                $scope.$emit("ChangeTitle", $scope.model.title);
+            },
+            function(error) {
+                //película no encontrada
+                $location.url(paths.notFound);
+            }
 
-    	);
+        );
 
 }]);
+
 ;angular.module("moviedb").controller("MoviesListController", ["$scope", "$log", "MovieService", "URL", "paths", function($scope, $log, MovieService, URL, paths) {
 
     //Scope init
