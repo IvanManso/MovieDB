@@ -36204,14 +36204,14 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
 
 
 }]);
-;angular.module("moviedb").controller("MovieDetailController", ["$scope", "$routeParams", "$location", "MovieService", "paths", function($scope, $routeParams, $location, MovieService, paths) {
+;angular.module("moviedb").controller("MovieDetailController", ["$scope", "$routeParams", "$location", "APIClient", "paths", function($scope, $routeParams, $location, APIClient, paths) {
     //Scope init
     $scope.model = {};
     $scope.uiState = "loading";
 
     //Controller init
     $scope.$emit("ChangeTitle", "Loading...");
-    MovieService.getMovie($routeParams.id)
+    APIClient.getMovie($routeParams.id)
         .then(function(movie) {
                 //película encontrada
                 $scope.model = movie;
@@ -36228,7 +36228,7 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
 
 }]);
 
-;angular.module("moviedb").controller("MoviesListController", ["$scope", "$log", "MovieService", "URL", "paths", function($scope, $log, MovieService, URL, paths) {
+;angular.module("moviedb").controller("MoviesListController", ["$scope", "$log", "APIClient", "URL", "paths", function($scope, $log, APIClient, URL, paths) {
 
     //Scope init
     $scope.model = [];
@@ -36241,7 +36241,7 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
 
 
     //Controller start
-    MovieService.getMovies()
+    APIClient.getMovies()
         .then(
             //promesa resuelta
             function(data) {
@@ -36261,6 +36261,19 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         );
 
 }]);
+;angular.module("moviedb").controller("SeriesListController", ["$scope", "APIClient", function($scope, APIClient){
+
+}]);
+;angular.module("moviedb").directive("mediaItemList", function(){
+	return{
+		restrict: "AE",
+		scope: {
+			model: "=items",
+			getDetailUrl: "="
+		},
+		templateUrl: "views/mediaItemList.html"
+	};
+});
 ;angular.module("moviedb").filter("ago", [function() {
     return function(text) {
         return moment(text).fromNow();
@@ -36286,7 +36299,7 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         }
     }
 }]);
-;angular.module("moviedb").service("MovieService", ["$http", "$q", "apiPaths", "URL", function($http, $q, apiPaths, URL) {
+;angular.module("moviedb").service("APIClient", ["$http", "$q", "apiPaths", "URL", function($http, $q, apiPaths, URL) {
 
     this.apiRequest = function(url) {
 
@@ -36336,6 +36349,33 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         var url = URL.resolve(apiPaths.movieDetail, { id: movieId });
         return this.apiRequest(url);
     };
+
+    this.getSeries = function() {
+
+        //crear el objeto diferido
+        var deferred = $q.defer();
+        //hacer trabajo asíncrono
+        $http.get(apiPaths.series)
+            .then(function(response) {
+                    //resolver la promesa
+                    deferred.resolve(response.data);
+                },
+
+                function(response) {
+                    //rechazar la promesa
+                    deferred.reject(response.data);
+                }
+            );
+
+
+        //devolver la promesa
+        return deferred.promise;
+    };
+
+    this.getSeries = function(serieId) {
+        var url = URL.resolve(apiPaths.serieDetail, { id: serieId });
+        return this.apiRequest(url);
+    };
 }]);
 ;//Creamos un módulo de angular ("URL", [])
 angular.module("URL", []).service("URL", ["$log", function($log) {
@@ -36364,7 +36404,9 @@ angular.module("URL", []).service("URL", ["$log", function($log) {
 }]);
 ;angular.module("moviedb").value("apiPaths", {
 	movies: "api/movies",
-	movieDetail: "api/movies/:id"
+	movieDetail: "api/movies/:id",
+	series: "api/series",
+	serieDetail: "api/series/:id"
 });
 ;angular.module("moviedb").constant("paths", {
 	home: "/",
