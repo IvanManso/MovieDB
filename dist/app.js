@@ -36134,6 +36134,9 @@ angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
             .when(paths.movies, {
                 templateUrl: "views/MoviesList.html"
             })
+            .when(paths.newMovie, {
+                templateUrl: "views/NewMovie.html"
+            })
             .when(paths.movieDetail, {
                 controller: "MovieDetailController",
                 templateUrl: "views/MediaItemDetail.html"
@@ -36162,9 +36165,11 @@ angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
     var controller = this;
     //Controller properties
     controller.titles = {}
-       controller.titles[paths.movies]= "Movies List";
-       controller.titles[paths.series]= "Series List";
-       controller.titles[paths.people]= "People List";
+    controller.titles[paths.movies] = "Movies List";
+    controller.titles[paths.series] = "Series List";
+    controller.titles[paths.people] = "People List";
+    controller.titles[paths.newMovie] = "Movie Form";
+
 
     //Model init
     $scope.model = {
@@ -36177,11 +36182,12 @@ angular.module("moviedb", ['ngRoute', "URL", "ngSanitize"]).config(
         $scope.model.title = controller.titles[$location.path()] || "404 Not found";
     });
 
-    $scope.$on("ChangeTitle", function(evt, title){
+    $scope.$on("ChangeTitle", function(evt, title) {
         $scope.model.title = title;
     });
 
 }]);
+
 ;//En el  módulo moviedb, defino el controlador
 angular.module("moviedb").controller("MenuController", ["$scope", "$location", "paths", function($scope, $location, paths) {
     //Scope init
@@ -36231,6 +36237,28 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
             }
 
         );
+
+}]);
+
+;angular.module("moviedb").controller("MovieFormController", ["$scope", "APIClient", function($scope, APIClient) {
+
+    //Scope init
+    $scope.model = {};
+    $scope.successMessage = null;
+    $scope.errorMessage = null;
+
+    //Scope methods
+    $scope.saveMovie = function() {
+        APIClient.createMovie($scope.model)
+            .then(
+                function(movie) {
+                	$scope.successMessage = "Movie saved! <a href=\"#movies/" + movie.id + "\"> View new movie detail</a>";
+                },
+                function(error) {
+                	$scope.errorMessage = "Fatal error. Then end is near.";
+                }
+            )
+    };
 
 }]);
 
@@ -36324,6 +36352,28 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         );
 
 }]);
+;angular.module("moviedb").directive("badwords", function() {
+    return {
+        require: "ngModel",
+        link: function($scope, elem, attrs, ctrl) {
+            var badwords = ["fuck", "shit"];
+            ctrl.$validators.badwords = function(modelValue, viewValue) {
+                var rawWords = modelValue || "";
+                var words = rawWords.split(" ");
+                for (var i in badwords) {
+                    var badword = badwords[i];
+                    if (words.indexOf(badword) >= 0) {
+                        ctrl.badword = badword;
+                        return false;
+                    }
+                }
+                ctrl.badword = "";
+                return true;
+            }
+        }
+    };
+});
+
 ;angular.module("moviedb").directive("mediaItem", function(){
 	return {
 		restrict: "AE",
@@ -36348,6 +36398,20 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         return moment(text).fromNow();
     };
 }]
+);
+;angular.module("moviedb").filter("join", ["$log", function($log){
+        return function(arr, sep){
+            var items = arr || null;
+            var separator = sep || ", ";
+            if (items == null)
+                return "";
+            if (typeof arr.join === "undefined") {
+                $log.error("The value passed to the filter 'join' must be an array.")
+                return "";
+            }
+            return arr.join(separator);
+        };
+    }]
 );
 ;angular.module("moviedb").filter("schoolrating", [function() {
     return function(rating, mode) {
@@ -36445,7 +36509,29 @@ angular.module("moviedb").controller("MenuController", ["$scope", "$location", "
         var url = URL.resolve(apiPaths.serieDetail, { id: serieId });
         return this.apiRequest(url);
     };
+
+    this.createMovie = function(movie) {
+        //crear el objeto diferido
+        var deferred = $q.defer();
+        //hacer trabajo asíncrono
+        $http.post(apiPaths.movies, movie)
+            .then(
+                function(response) {
+                    //resolver la promesa
+                    deferred.resolve(response.data);
+                },
+
+                function(response) {
+                    //rechazar la promesa
+                    deferred.reject(response.data);
+                }
+            );
+        //devolver la promesa
+        return deferred.promise;
+    };
+
 }]);
+
 ;//Creamos un módulo de angular ("URL", [])
 angular.module("URL", []).service("URL", ["$log", function($log) {
     //params es un dicionario
@@ -36478,11 +36564,12 @@ angular.module("URL", []).service("URL", ["$log", function($log) {
 	serieDetail: "api/series/:id"
 });
 ;angular.module("moviedb").constant("paths", {
-	home: "/",
-	movies: "/movies",
-	movieDetail: "/movies/:id",
-	series: "/series",
-	serieDetail: "/series/:id",
-	people: "/people",
-	notFound: "/sorry"
+    home: "/",
+    movies: "/movies",
+    newMovie: "/movies/new",
+    movieDetail: "/movies/:id",
+    series: "/series",
+    serieDetail: "/series/:id",
+    people: "/people",
+    notFound: "/sorry"
 });
