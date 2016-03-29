@@ -11,6 +11,8 @@ angular.module("moviedb").controller("MovieFormController", ["$scope", "APIClien
             .then(
                 function(movie) {
                 	$scope.successMessage = "Movie saved! <a href=\"#movies/" + movie.id + "\"> View new movie detail</a>";
+                	$scope.model = {};
+                	$scope.movieForm.$setPristine();
                 },
                 function(error) {
                 	$scope.errorMessage = "Fatal error. Then end is near.";
